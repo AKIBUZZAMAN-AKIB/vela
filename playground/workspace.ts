@@ -190,3 +190,7 @@ if (location.hash.startsWith("#s")) {
 // // CROSS-SHELL — one format: a WIDGET document (layout '1', one `c1` cell)
 // // applies here verbatim, and a workspace cell's state restores into a widget.
 // // ws.applyState(widget.getState());
+
+// Dev handle: the console (and the Playwright probes) can drive the shell directly —
+// `velaWorkspace.newWorkspace()`, `.workspaces()`, `.switchWorkspace(1)`, `.getState()`.
+(window as unknown as { velaWorkspace: VelaWorkspace }).velaWorkspace = ws;

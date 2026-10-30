@@ -8365,6 +8365,183 @@ registerMap(BUILTINS);
 registerDrawing(BUILTINS);
 registerStrategyMetrics(BUILTINS);
 registerTime(BUILTINS);
+registerFootprint(BUILTINS);
+
+// src/runtime/builtins/footprint.ts
+//
+// Pine v6 order-flow (volume footprint) builtins.
+//
+// The footprint of a bar is volume-at-price: for each price row, how much was
+// bought (at the ask) and sold (at the bid). Pine exposes the current bar's
+// footprint through two namespaces: `footprint.*` aggregates it, and the rows it
+// returns are `volume_row` values whose fields are read with member access
+// (`row.delta`, `row.poc` is not a field — `footprint.poc` is the bar-level one).
+//
+// DATA CONTRACT — the engine has no market data of its own, so the HOST supplies
+// the footprint on the bar it feeds in:
+//
+//     bar.footprint = {
+//         tickSize?: number,              // price step of one row (default: symbol mintick)
+//         rows: Array<{
+//             price: number,              // the row's LOWER price edge
+//             buyVolume: number,          // volume traded at the ask
+//             sellVolume: number,         // volume traded at the bid
+//         }>
+//     }
+//
+// Rows are sorted by price by the engine, so a host may pass them in any order.
+// When a bar carries no footprint (or an empty one) every builtin returns `na`
+// and the engine emits ONE warning per call site — a silent `na` is impossible to
+// debug from the script side.
+function footprintRowsOf(rt) {
+  const bar = rt.bar;
+  const fp = bar && bar.footprint;
+  if (!fp || !Array.isArray(fp.rows) || fp.rows.length === 0) return null;
+  const rows = fp.rows
+    .map((r) => ({
+      price: toNum(r.price),
+      buy: toNum(r.buyVolume ?? r.buy ?? 0) ?? 0,
+      sell: toNum(r.sellVolume ?? r.sell ?? 0) ?? 0
+    }))
+    .filter((r) => r.price !== null && Number.isFinite(r.price));
+  if (rows.length === 0) return null;
+  rows.sort((a, b) => a.price - b.price);
+  const tick = toNum(fp.tickSize) ?? toNum(rt.market?.symbolInfo?.mintick) ?? 0;
+  return { rows, tick };
+}
+
+/** `na` plus one warning per distinct message, so a missing feed is visible once. */
+function footNa(rt, what) {
+  rt.warn(what, 'no footprint data on this bar; the host must supply `bar.footprint` (see docs/user/footprint.md)');
+  return null;
+}
+
+function rowDelta(r) {
+  return r.buy - r.sell;
+}
+
+function rowValue(r, field) {
+  return { __pine: 'volume_row', ...r, ...field };
+}
+
+function toVolumeRow(r, tick) {
+  const total = r.buy + r.sell;
+  // A buy imbalance is an aggressive-buy row that dwarfs the sell volume one tick
+  // BELOW it (the diagonal read footprint traders use); a sell imbalance is the
+  // mirror image against the row above. The ladder's EDGE rows have no diagonal
+  // neighbour, so they cannot establish an imbalance and report false — comparing a
+  // row against its own two sides instead would flag every thin edge row.
+  const below = r.__below ?? null;
+  const above = r.__above ?? null;
+  return rowValue(
+    { buy: r.buy, sell: r.sell, total, delta: rowDelta(r), price: r.price, tick },
+    {
+      buy_volume: r.buy,
+      sell_volume: r.sell,
+      total_volume: total,
+      delta: rowDelta(r),
+      up_price: tick > 0 ? r.price + tick : r.price,
+      down_price: r.price,
+      has_buy_imbalance: total > 0 && below !== null && r.buy >= 3 * below.sell,
+      has_sell_imbalance: total > 0 && above !== null && r.sell >= 3 * above.buy
+    }
+  );
+}
+
+function footprintModel(rt, what) {
+  const fp = footprintRowsOf(rt);
+  if (!fp) return footNa(rt, what);
+  const rows = fp.rows.map((r, i) => ({ ...r, __below: fp.rows[i - 1] ?? null, __above: fp.rows[i + 1] ?? null }));
+  const total = rows.reduce((n, r) => n + r.buy + r.sell, 0);
+  const buy = rows.reduce((n, r) => n + r.buy, 0);
+  const sell = rows.reduce((n, r) => n + r.sell, 0);
+  // POC: the single busiest row; ties resolve to the LOWEST price so the result is
+  // stable across runs (a tie is common on synthetic data).
+  let poc = rows[0];
+  for (const r of rows) if (r.buy + r.sell > poc.buy + poc.sell) poc = r;
+  // Value area: start at the POC and repeatedly absorb the heavier neighbour until
+  // 70% of the bar's volume is inside (the standard TPO/value-area expansion).
+  let lo = rows.indexOf(poc);
+  let hi = lo;
+  let inside = poc.buy + poc.sell;
+  const target = total * 0.7;
+  while (inside < target && (lo > 0 || hi < rows.length - 1)) {
+    const down = lo > 0 ? rows[lo - 1].buy + rows[lo - 1].sell : -1;
+    const up = hi < rows.length - 1 ? rows[hi + 1].buy + rows[hi + 1].sell : -1;
+    if (up >= down) {
+      hi += 1;
+      inside += up;
+    } else {
+      lo -= 1;
+      inside += down;
+    }
+  }
+  return {
+    rows: rows.map((r) => toVolumeRow(r, fp.tick)),
+    raw: rows,
+    total,
+    buy,
+    sell,
+    delta: buy - sell,
+    poc: fp.tick > 0 ? poc.price + fp.tick / 2 : poc.price,
+    val: rows[lo].price,
+    vah: fp.tick > 0 ? rows[hi].price + fp.tick : rows[hi].price
+  };
+}
+
+function registerFootprint(r) {
+  r.set('footprint.total_volume', (c) => {
+    const m = footprintModel(c.rt, 'footprint.total_volume');
+    return m ? m.total : null;
+  });
+  r.set('footprint.buy_volume', (c) => {
+    const m = footprintModel(c.rt, 'footprint.buy_volume');
+    return m ? m.buy : null;
+  });
+  r.set('footprint.sell_volume', (c) => {
+    const m = footprintModel(c.rt, 'footprint.sell_volume');
+    return m ? m.sell : null;
+  });
+  r.set('footprint.delta', (c) => {
+    const m = footprintModel(c.rt, 'footprint.delta');
+    return m ? m.delta : null;
+  });
+  r.set('footprint.poc', (c) => {
+    const m = footprintModel(c.rt, 'footprint.poc');
+    return m ? m.poc : null;
+  });
+  r.set('footprint.val', (c) => {
+    const m = footprintModel(c.rt, 'footprint.val');
+    return m ? m.val : null;
+  });
+  r.set('footprint.vah', (c) => {
+    const m = footprintModel(c.rt, 'footprint.vah');
+    return m ? m.vah : null;
+  });
+  r.set('footprint.rows', (c) => {
+    const m = footprintModel(c.rt, 'footprint.rows');
+    return m ? new PineArray(m.rows, 'volume_row') : new PineArray([], 'volume_row');
+  });
+  r.set('footprint.get_row_by_price', (c) => {
+    const m = footprintModel(c.rt, 'footprint.get_row_by_price');
+    if (!m) return null;
+    const price = toNum(c.arg(0, 'price'));
+    if (price === null) return null;
+    // The price belongs to the row whose [down_price, up_price) band contains it.
+    let found = null;
+    for (let i = 0; i < m.raw.length; i++) {
+      const row = m.raw[i];
+      const lo = row.price;
+      const hi = m.rows[0].up_price > m.rows[0].down_price ? lo + (m.rows[0].up_price - m.rows[0].down_price) : lo;
+      if (price >= lo && (price < hi || i === m.raw.length - 1)) {
+        found = m.rows[i];
+        break;
+      }
+    }
+    return found;
+  });
+}
+
 function builtinNames() {
   return [...BUILTINS.keys()].sort();
 }
@@ -8389,7 +8566,8 @@ var KNOWN_NAMESPACES = /* @__PURE__ */ new Set([
   "syminfo",
   "timeframe",
   "session",
-  "barstate"
+  "barstate",
+  "footprint"
 ]);
 function memberPath(expr) {
   if (expr.kind === "ident") return expr.name;

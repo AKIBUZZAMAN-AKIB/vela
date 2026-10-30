@@ -117,6 +117,7 @@ import {
 } from './sync';
 import { normalizeCursorStyle, type CursorStyle } from '../core/cursor';
 import { encodeState, decodeState, decodeStateDetailed, sanitizeState, type CellState, type ChartTemplate, type DrawingToolsState, type SavedLayoutMeta, type WorkspaceState, type WorkspaceStorage } from './persist';
+import { DEFAULT_WORKSPACE_NAME, newWorkspaceDocument, stepWorkspace, uniqueWorkspaceName, workspaceProfiles, type WorkspaceProfile } from './workspaces';
 import { encodeShareUrl, decodeShareHash } from '../state/share';
 import { decodeLayoutShareHash, isLayoutShareHash, layoutShareUrl } from './share-link';
 import { localStorageAdapter, type StorageFailure } from '../widget/persist';
@@ -4670,6 +4671,60 @@ export class VelaWorkspace {
         return true;
     }
 
+    // ── workspaces ──────────────────────────────────────────────
+    /**
+     * Start a NEW workspace and open it, leaving the previous one saved.
+     *
+     * "New workspace" is not "clear the chart": the grid, indicators, drawings and links
+     * of the workspace being left belong to that workspace and stay in it. What the new
+     * one keeps is the trader's PREFERENCES (theme, timezone, favorites, drawing defaults,
+     * dock) and the market that was in view — see `newWorkspaceDocument`.
+     *
+     * Returns the name it was given, which the caller can show.
+     */
+    newWorkspace(name?: string): string {
+        // The open workspace is captured first. An untitled document cannot be lost this
+        // way, and a named one is saved in place — creating a workspace never destroys one.
+        if (this.activeSavedLayout) this.saveLayout(this.activeSavedLayout, { silent: true });
+        const doc = newWorkspaceDocument(this.getState());
+        this.applyState(doc);
+        const target = uniqueWorkspaceName(name ?? DEFAULT_WORKSPACE_NAME, this.savedLayouts.keys());
+        this.saveLayout(target, { silent: true });
+        this.toast(`Workspace “${target}” created`, 'success');
+        return target;
+    }
+
+    /**
+     * Step `delta` workspaces through the saved list, wrapping at both ends. Edits in the
+     * workspace being left are written back first: a switch is navigation, not a discard,
+     * and a shortcut that quietly dropped five minutes of drawing would not be used twice.
+     *
+     * Returns the workspace now open, or null when there is nothing to switch to.
+     */
+    switchWorkspace(delta = 1): string | null {
+        const target = stepWorkspace([...this.savedLayouts.keys()], this.activeSavedLayout, delta);
+        if (!target) {
+            this.toast('No saved workspace yet — save this one first', 'info');
+            return null;
+        }
+        if (target === this.activeSavedLayout) return target;
+        if (this.activeSavedLayout && this.isActiveLayoutDirty()) {
+            this.saveLayout(this.activeSavedLayout, { silent: true });
+        }
+        this.openLayout(target);
+        return target;
+    }
+
+    /** The switcher's rows: every saved workspace, with its freshness and dirty state. */
+    workspaces(): WorkspaceProfile[] {
+        const entries = [...this.savedLayouts].map(([name, doc]) => ({
+            name,
+            doc,
+            savedAt: this.layoutMeta.get(name)?.savedAt,
+        }));
+        return workspaceProfiles(entries, this.activeSavedLayout, this.isActiveLayoutDirty());
+    }
+
     /**
      * Write the ACTIVE cell's bars as CSV and hand the file to the browser. `visible`
      * narrows to the window on screen (the bars the trader is reasoning about); `all`
@@ -7812,6 +7867,35 @@ export class VelaWorkspace {
         }
         // Grid chords — TradingView's two: Tab walks the ACTIVE chart, Alt+Enter
         // maximizes it (its Alt+Click sibling lives on the cell's renderer click).
+        // Workspaces: start one, and step through them. Alt+brackets sit beside the chord
+        // family the chart already uses (Alt+R/G/W/L are the chart, Alt+T/H/V the tools).
+        this.keymap.register({
+            id: 'workspace.new',
+            keys: 'mod+alt+n',
+            label: 'Start a new workspace',
+            category: 'Layout',
+            run: () => {
+                this.newWorkspace();
+            },
+        });
+        this.keymap.register({
+            id: 'workspace.next',
+            keys: 'alt+]',
+            label: 'Switch to the next workspace',
+            category: 'Layout',
+            run: () => {
+                this.switchWorkspace(1);
+            },
+        });
+        this.keymap.register({
+            id: 'workspace.previous',
+            keys: 'alt+[',
+            label: 'Switch to the previous workspace',
+            category: 'Layout',
+            run: () => {
+                this.switchWorkspace(-1);
+            },
+        });
         this.keymap.register({
             id: 'layout.cycle-active',
             keys: 'tab',

@@ -6,7 +6,7 @@
 //
 // The engine is MIT and dependency-free, so the copy is self-contained — see the vendored
 // README for why it exists.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,3 +39,20 @@ if (existsSync(readme)) {
     writeFileSync(readme, text);
 }
 console.log(`synced vela-pine-libre ${version} → playground/vendor/pine-libre`);
+
+// A sync overwrites the vendored bundle WHOLESALE, dropping the local patches this
+// repo applies on top of it. The order-flow builtins (`footprint.*`, `volume_row`) are
+// one of those patches, so the sync reminds the operator instead of letting the feature
+// disappear silently — scripts that worked yesterday would fail with
+// `Undeclared identifier "footprint"` and nothing would connect that to a sync.
+const patches = join(root, 'scripts/patches');
+if (existsSync(patches)) {
+    const pending = readdirSync(patches).filter((f) => f.endsWith('.patch'));
+    if (pending.length > 0) {
+        console.warn('');
+        console.warn('  ⚠  Local engine patches must be re-applied to the fresh bundle:');
+        for (const file of pending) console.warn(`     git apply scripts/patches/${file}`);
+        console.warn('     then: npx vitest run test/pine-footprint.test.ts');
+        console.warn('');
+    }
+}

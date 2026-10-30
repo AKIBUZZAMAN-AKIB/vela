@@ -264,6 +264,34 @@ interface OHLCV {
     low: number;
     close: number;
     volume?: number;
+    /** Volume-at-price for this bar: the input of the `footprint.*` builtins. */
+    footprint?: FootprintBar;
+}
+/**
+ * One price row of a bar's volume footprint. `price` is the row's LOWER edge; the
+ * engine sorts rows by price, so a host may pass them in any order.
+ */
+interface FootprintRow {
+    price: number;
+    buyVolume: number;
+    sellVolume: number;
+}
+/** A bar's volume-at-price, supplied by the host (the engine has no feed of its own). */
+interface FootprintBar {
+    /** Price step of one row. Defaults to `symbolInfo.mintick`. */
+    tickSize?: number;
+    rows: FootprintRow[];
+}
+/** A resolved footprint row, as `footprint.rows()` / `footprint.get_row_by_price()` return it. */
+interface VolumeRow {
+    readonly buy_volume: number;
+    readonly sell_volume: number;
+    readonly total_volume: number;
+    readonly delta: number;
+    readonly up_price: number;
+    readonly down_price: number;
+    readonly has_buy_imbalance: boolean;
+    readonly has_sell_imbalance: boolean;
 }
 type InputValue = number | string | boolean;
 type InputType = 'int' | 'float' | 'bool' | 'string' | 'source' | 'color' | 'price' | 'time' | 'session' | 'timeframe' | 'symbol' | 'text_area';
@@ -1738,4 +1766,4 @@ declare class PineRuntimeError extends Error {
 /** Every registered builtin name — used by the compatibility documentation and tests. */
 declare function builtinNames(): string[];
 
-export { type AnalyzedScript, type Background, type BarRange, type BarsChangeReason, Broker, type BrokerOptions, COLOR_NAMES, type CandlePoint, type CandleSeries, type CommissionType, type ContextSelect, DEFAULT_BROKER_OPTIONS, type DeclarationInfo, type DrawingBox, type DrawingExtend, type DrawingLabel, type DrawingLine, type DrawingLinefill, type DrawingPolyline, type DrawingTable, type DrawingXLoc, type EngineAlert, type EngineCapabilities, type EngineContextSnapshot, type EngineWarning, type ExecutionHandlers, type ExecutionMarket, type ExecutionRequest, type ExecutionSession, type Expr, type FetchSeries, type Fill, type FontFamily, type HAlign, INDICATOR_PROP_SPECS, type IndicatorMeta, type IndicatorModel, type InputSchema, type InputType, type InputValue, type LabelStyleName, type LineLikeKind, type LineLikeSeries, type LineLikeStyle, type LineStyle, type MarkerPoint, type MarkerSeries, type Millis, type OHLCV, PineArray, PineColor, PineEngine, type PineEngineOptions, type PineLibraryImport, type PineLibraryResolver, PineRuntimeError, PineSyntaxError, PineWorkerEngine, type PineWorkerOptions, type PolylinePoint, type PreparedScript, type PreparedToken, type PriceLine, type PropsVisibility, type QtyType, type RunResult, Runtime, type RuntimeConfig, STRATEGY_PROP_SPECS, type Script, type ScriptingEngine, type SecurityRequest, type SeriesBase, type SeriesPoint, type SeriesSpec, type Stmt, type StrategyFill, type StrategyState, type StrategyTrade, type SymbolInfo, type TableCell, type TableMerge, type TablePosition, type TextSizeName, type TradeExecution, type VAlign, type VisibleBarRange, type WorkerHandler, type WorkerLike, type WorkerScope, analyze, assertSupportedVersion, builtinNames, createWorkerHandler, detectVersion, installWorker, normalizeError, parseScript, resetCallIds, tokenize };
+export { type AnalyzedScript, type FootprintBar, type FootprintRow, type VolumeRow, type Background, type BarRange, type BarsChangeReason, Broker, type BrokerOptions, COLOR_NAMES, type CandlePoint, type CandleSeries, type CommissionType, type ContextSelect, DEFAULT_BROKER_OPTIONS, type DeclarationInfo, type DrawingBox, type DrawingExtend, type DrawingLabel, type DrawingLine, type DrawingLinefill, type DrawingPolyline, type DrawingTable, type DrawingXLoc, type EngineAlert, type EngineCapabilities, type EngineContextSnapshot, type EngineWarning, type ExecutionHandlers, type ExecutionMarket, type ExecutionRequest, type ExecutionSession, type Expr, type FetchSeries, type Fill, type FontFamily, type HAlign, INDICATOR_PROP_SPECS, type IndicatorMeta, type IndicatorModel, type InputSchema, type InputType, type InputValue, type LabelStyleName, type LineLikeKind, type LineLikeSeries, type LineLikeStyle, type LineStyle, type MarkerPoint, type MarkerSeries, type Millis, type OHLCV, PineArray, PineColor, PineEngine, type PineEngineOptions, type PineLibraryImport, type PineLibraryResolver, PineRuntimeError, PineSyntaxError, PineWorkerEngine, type PineWorkerOptions, type PolylinePoint, type PreparedScript, type PreparedToken, type PriceLine, type PropsVisibility, type QtyType, type RunResult, Runtime, type RuntimeConfig, STRATEGY_PROP_SPECS, type Script, type ScriptingEngine, type SecurityRequest, type SeriesBase, type SeriesPoint, type SeriesSpec, type Stmt, type StrategyFill, type StrategyState, type StrategyTrade, type SymbolInfo, type TableCell, type TableMerge, type TablePosition, type TextSizeName, type TradeExecution, type VAlign, type VisibleBarRange, type WorkerHandler, type WorkerLike, type WorkerScope, analyze, assertSupportedVersion, builtinNames, createWorkerHandler, detectVersion, installWorker, normalizeError, parseScript, resetCallIds, tokenize };
